@@ -1,9 +1,13 @@
-﻿using System.Net;
+﻿using System;
+using System.IO;
+using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.Web.Http;
 using Microsoft.Bot.Builder.Dialogs;
 using Microsoft.Bot.Connector;
+using Microsoft.Cognitive.CustomVision.Prediction;
+using Microsoft.Cognitive.CustomVision.Training;
 
 namespace SimpleCookBot
 {
@@ -18,7 +22,17 @@ namespace SimpleCookBot
         {
             if (activity.GetActivityType() == ActivityTypes.Message)
             {
-                await Conversation.SendAsync(activity, () => new Dialogs.RootDialog());
+                if (activity.Attachments?.Count >= 1)
+                {
+                    if (activity.Attachments[0].ContentType == "image/png" || activity.Attachments[0].ContentType == "image/jpeg" || activity.Attachments[0].ContentType == "image/jpg")
+                    {
+                        MakePrediction(activity);
+                    }
+                }
+                else
+                {
+                    await Conversation.SendAsync(activity, () => new Dialogs.RootDialog());
+                }
             }
             else
             {
@@ -56,6 +70,47 @@ namespace SimpleCookBot
             }
 
             return null;
+        }
+
+        private async Task MakePrediction(Activity message)
+        {
+            string trainingKey = "";
+            string predictionKey = "";
+
+            // Create the Api, passing in the training key
+            TrainingApi trainingApi = new TrainingApi() { ApiKey = trainingKey };
+
+            Guid projectId = new Guid("");
+            var project = trainingApi.GetProject(projectId);
+
+            // Create a prediction endpoint, passing in obtained prediction key
+            PredictionEndpoint endpoint = new PredictionEndpoint() { ApiKey = predictionKey };
+
+            // The the local test image
+            string imageUrl = $"{message.Attachments[0].ContentUrl}";
+            MemoryStream image = GetStreamFromUrl(imageUrl);
+
+            // Make a prediction against the new project
+            var result = endpoint.PredictImage(project.Id, image);
+
+            ConnectorClient connector = new ConnectorClient(new Uri(message.ServiceUrl));
+
+            // Loop over each prediction and write out the results
+            foreach (var c in result.Predictions)
+            {
+                Activity reply = message.CreateReply($"\t{c.Tag}: {c.Probability:P1}");
+                await connector.Conversations.ReplyToActivityAsync(reply);
+            }
+        }
+
+        private static MemoryStream GetStreamFromUrl(string url)
+        {
+            byte[] imageData = null;
+
+            using (var wc = new System.Net.WebClient())
+                imageData = wc.DownloadData(url);
+
+            return new MemoryStream(imageData);
         }
     }
 }
